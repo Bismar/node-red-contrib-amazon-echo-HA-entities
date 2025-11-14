@@ -156,13 +156,139 @@
         }
       }
 
-      function setCounts(filteredDevicesCount) {
-        const filteredOut = Math.max(0, TOTAL_DEVICES - filteredDevicesCount);
-        const labelText = (x,y) => `${x} available, ${y} filtered`;
-        $areaCount.text(labelText(TOTAL_DEVICES, filteredOut));
-        $labelCount.text(labelText(TOTAL_DEVICES, filteredOut));
-        $domainCount.text(labelText(TOTAL_DEVICES, filteredOut));
-        $deviceCount.text(labelText(TOTAL_DEVICES, filteredOut));
+      function setEntityHint() {
+        const eid = $entity.val() || "";
+        $hint.text(eid ? ("Selected entity_id: " + eid) : "");
+      }
+
+      function showEntityInfo(info) {
+        if (!info || !info.entity_id) {
+          $modesRow.hide(); $attrsRow.hide(); $modes.empty(); $attrs.text("");
+          return;
+        }
+        const dm = info.detected_modes || {};
+        const keys = Object.keys(dm).filter(k => Array.isArray(dm[k]) && dm[k].length);
+        if (keys.length) {
+          const frag = document.createDocumentFragment();
+          keys.forEach(k => {
+            const group = document.createElement("div");
+            group.style.marginBottom = "4px";
+            const title = document.createElement("div");
+            title.style.fontWeight = "600";
+            title.textContent = k;
+            group.appendChild(title);
+            dm[k].forEach(v => {
+              const pill = document.createElement("span");
+              pill.textContent = v;
+              pill.style.display = "inline-block";
+              pill.style.padding = "2px 6px";
+              pill.style.margin = "2px 6px 0 0";
+              pill.style.border = "1px solid #bbb";
+              pill.style.borderRadius = "999px";
+              pill.style.background = "#fff";
+              group.appendChild(pill);
+            });
+            frag.appendChild(group);
+          });
+          $modes.empty().append(frag);
+          $modesRow.show();
+        } else {
+          $modes.empty(); $modesRow.hide();
+        }
+
+        if (info.attributes && typeof info.attributes === "object") {
+          try { $attrs.text(JSON.stringify(info.attributes, null, 2)); }
+          catch (e) { $attrs.text(String(info.attributes)); }
+          $attrsRow.show();
+        } else {
+          $attrs.text(""); $attrsRow.hide();
+        }
+      }
+
+      // Simple helper used when we don't have enough info for full sequential counts
+      function setCountsSimple(availableCount) {
+        const total = TOTAL_DEVICES || 0;
+        const avail = typeof availableCount === "number" ? availableCount : total;
+        const filtered = Math.max(0, total - avail);
+        const labelText = (a, f) => `${a} available, ${f} filtered`;
+        $areaCount.text(labelText(avail, filtered));
+        $labelCount.text(labelText(avail, filtered));
+        $domainCount.text(labelText(avail, filtered));
+        $deviceCount.text(labelText(avail, filtered));
+      }
+
+      // Sequential counts: area → label → domain → device
+      function updateSequentialCounts(serverId, areaId, labelId, domain, finalDevicesCount) {
+        const total = TOTAL_DEVICES || 0;
+        const labelText = (a, f) => `${a} available, ${f} filtered`;
+
+        if (!total || !serverId) {
+          // Fallback: just show a simple total vs filtered
+          const avail = typeof finalDevicesCount === "number" ? finalDevicesCount : total;
+          const filtered = Math.max(0, total - avail);
+          $areaCount.text(labelText(avail, filtered));
+          $labelCount.text(labelText(avail, filtered));
+          $domainCount.text(labelText(avail, filtered));
+          $deviceCount.text(labelText(avail, filtered));
+          return;
+        }
+
+        const baseAvailable = total;
+        let areaAvail = baseAvailable;
+        let labelAvail = baseAvailable;
+        let domainAvail = typeof finalDevicesCount === "number" ? finalDevicesCount : baseAvailable;
+
+        function applyLabels() {
+          const areaFiltered   = baseAvailable - areaAvail;
+          const labelFiltered  = areaAvail     - labelAvail;
+          const domainFiltered = labelAvail    - domainAvail;
+          const deviceFiltered = baseAvailable - domainAvail;
+
+          $areaCount.text(labelText(areaAvail,   areaFiltered));
+          $labelCount.text(labelText(labelAvail, labelFiltered));
+          $domainCount.text(labelText(domainAvail, domainFiltered));
+          $deviceCount.text(labelText(domainAvail, deviceFiltered));
+        }
+
+        function loadCount(query, cb) {
+          $.getJSON("amazon-echo-ha-entities/devices", query)
+            .done(devs => cb(null, Array.isArray(devs) ? devs.length : 0))
+            .fail(() => cb(new Error("failed")));
+        }
+
+        const baseQuery = { server: serverId };
+
+        function afterArea() {
+          if (labelId) {
+            const qLabel = Object.assign(
+              {},
+              baseQuery,
+              areaId ? { area: areaId } : {},
+              { label: labelId }
+            );
+            loadCount(qLabel, (err, count) => {
+              if (!err) labelAvail = count;
+              // If no domain filter, domainAvailable is same as after label
+              if (!domain) domainAvail = labelAvail;
+              applyLabels();
+            });
+          } else {
+            labelAvail = areaAvail;
+            if (!domain) domainAvail = labelAvail;
+            applyLabels();
+          }
+        }
+
+        if (areaId) {
+          const qArea = Object.assign({}, baseQuery, { area: areaId });
+          loadCount(qArea, (err, count) => {
+            if (!err) areaAvail = count;
+            afterArea();
+          });
+        } else {
+          areaAvail = baseAvailable;
+          afterArea();
+        }
       }
 
       function resetSelect($sel, firstText) {
@@ -178,7 +304,7 @@
         $entity.prop("disabled", true);
         setEntityHint();
         showEntityInfo(null);
-        setCounts(0);
+        setCountsSimple(0);
       }
       resetAll();
 
@@ -235,12 +361,19 @@
             });
             if (selectedDeviceId) $device.val(selectedDeviceId);
 
-            // Update device count summary
-            setCounts((devices || []).length);
+            // Update device count summary (sequential: area → label → domain)
+            updateSequentialCounts(
+              serverId,
+              areaId,
+              labelId,
+              domain,
+              (devices || []).length
+            );
 
             // Now load entities for the selected/first device
             const devId = $device.val();
             loadEntities(serverId, devId, $("#node-input-haEntityId").val());
+           
           })
           .fail(function (xhr) {
             resetSelect($device, "(failed to load)");
@@ -304,9 +437,14 @@
         loadDevices($server.val(), $area.val(), $label.val(), $domain.val(), $("#node-input-haDeviceId").val());
       });
       $device.on("change", function(){
+        // Persist selected device id into the node property
+        $("#node-input-haDeviceId").val($device.val());
         loadEntities($server.val(), $device.val(), $("#node-input-haEntityId").val());
       });
+
       $entity.on("change", function(){
+        // Persist selected entity id into the node property
+        $("#node-input-haEntityId").val($entity.val());
         setEntityHint();
         loadEntityInfo($server.val(), $entity.val());
       });
