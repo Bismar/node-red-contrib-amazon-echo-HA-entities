@@ -137,3 +137,318 @@
 
         const q = { server: serverId };
         if (areaId)  q.area  = areaId;
+        if (labelId) q.label = labelId;
+
+        // Fetch devices filtered by area+label
+        $.getJSON("amazon-echo-ha-entities/devices", q).done(devs => {
+
+          const deviceIds = devs.map(d => d.id);
+
+          // Fetch all entities to extract correct domains
+          $.getJSON("amazon-echo-ha-entities/entities", { server: serverId }).done(allEntities => {
+
+            const domainSet = new Set();
+
+            allEntities.forEach(ent => {
+              if (!ent.device_id) return;
+              if (deviceIds.includes(ent.device_id)) {
+                const dom = ent.entity_id.split(".")[0];
+                domainSet.add(dom);
+              }
+            });
+
+            // Build dropdown
+            resetSelect($domain, "(All component types)");
+
+            [...domainSet].sort().forEach(d => {
+              $domain.append($("<option/>",{ value:d, text:d }));
+            });
+
+            // Restore only if valid with new filtered set
+            if (restoredDomain && domainSet.has(restoredDomain))
+              $domain.val(restoredDomain);
+          });
+        });
+      }
+
+      /* -----------------------------------------
+       * Sequential Count Update (Area → Label → Domain)
+       * ----------------------------------------- */
+      function updateCounts(serverId, areaId, labelId, domainId, finalCount) {
+
+        const fmt = (a,f) => `${a} available, ${f} filtered`;
+
+        const total = TOTAL_DEVICES || 0;
+
+        if (!serverId || !total) {
+          let filtered = total - finalCount;
+          $areaCount.text(fmt(finalCount, filtered));
+          $labelCount.text(fmt(finalCount, filtered));
+          $domainCount.text(fmt(finalCount, filtered));
+          $deviceCount.text(fmt(finalCount, filtered));
+          return;
+        }
+
+        const baseQ = { server:serverId };
+
+        function loadCount(q) {
+          return $.getJSON("amazon-echo-ha-entities/devices", q)
+            .then(arr => arr.length)
+            .catch(() => total);
+        }
+
+        // AREA PHASE
+        const areaQ = areaId ? {...baseQ, area:areaId} : baseQ;
+
+        loadCount(areaQ).then(areaAvail => {
+
+          // LABEL PHASE
+          const labelQ = labelId
+            ? {...areaQ, label:labelId}
+            : areaQ;
+
+          loadCount(labelQ).then(labelAvail => {
+
+            // DOMAIN PHASE
+            const domainAvail = finalCount;
+
+            // Compute filtered numbers
+            const areaFiltered   = total - areaAvail;
+            const labelFiltered  = areaAvail - labelAvail;
+            const domainFiltered = labelAvail - domainAvail;
+            const deviceFiltered = total - domainAvail;
+
+            $areaCount.text(fmt(areaAvail, areaFiltered));
+            $labelCount.text(fmt(labelAvail, labelFiltered));
+            $domainCount.text(fmt(domainAvail, domainFiltered));
+            $deviceCount.text(fmt(domainAvail, deviceFiltered));
+          });
+        });
+      }
+
+      /* -----------------------------------------
+       * Entity Preview
+       * ----------------------------------------- */
+      function loadEntityInfo(serverId, entityId){
+        if (!entityId) {
+          $modesRow.hide(); $attrsRow.hide();
+          return;
+        }
+
+        $.getJSON("amazon-echo-ha-entities/entity_info", {
+          server: serverId, entity: entityId
+        })
+        .done(info => {
+          const attrs = info.attributes || {};
+          const modes = info.detected_modes || {};
+
+          // MODES
+          if (Object.keys(modes).length) {
+            $modes.empty();
+            for (let key in modes) {
+              const block = $("<div/>").css("margin-bottom","6px");
+              block.append($("<div/>").css("font-weight","600").text(key));
+              modes[key].forEach(v => {
+                block.append(
+                  $("<span/>").text(v).css({
+                    display:"inline-block",
+                    padding:"2px 7px",
+                    margin:"2px 3px",
+                    border:"1px solid #ccc",
+                    borderRadius:"12px"
+                  })
+                );
+              });
+              $modes.append(block);
+            }
+            $modesRow.show();
+          } else {
+            $modesRow.hide();
+          }
+
+          // ATTRIBUTES
+          $attrs.text(JSON.stringify(attrs, null, 2));
+          $attrsRow.show();
+        });
+      }
+
+      /* -----------------------------------------
+       * Load Entities
+       * ----------------------------------------- */
+      function loadEntities(serverId, deviceId, restoredEntity) {
+
+        resetSelect($entity,"(Loading entities...)");
+
+        const q = { server:serverId };
+        if (deviceId) q.device = deviceId;
+
+        $.getJSON("amazon-echo-ha-entities/entities", q).done(ents => {
+
+          resetSelect($entity,"(Select entity)");
+
+          ents.forEach(e => {
+            $entity.append(
+              $("<option/>",{value:e.entity_id, text:e.displayName || e.name || e.entity_id})
+            );
+          });
+
+          if (restoredEntity) $entity.val(restoredEntity);
+
+          setHint();
+
+          if ($entity.val()) {
+            loadEntityInfo(serverId, $entity.val());
+          }
+        });
+      }
+
+      /* -----------------------------------------
+       * Load Devices
+       * ----------------------------------------- */
+      function loadDevices(serverId, areaId, labelId, domainId, restoredDeviceId) {
+
+        resetSelect($device,"(Loading devices...)");
+
+        const q = { server:serverId };
+        if (areaId)  q.area  = areaId;
+        if (labelId) q.label = labelId;
+        if (domainId) q.domain = domainId;
+
+        $.getJSON("amazon-echo-ha-entities/devices", q).done(devs => {
+
+          resetSelect($device,"(Select device)");
+
+          devs.forEach(d => {
+            $device.append(
+              $("<option/>",{
+                value:d.id,
+                text:d.displayName || d.name || d.id
+              })
+            );
+          });
+
+          if (restoredDeviceId) $device.val(restoredDeviceId);
+
+          updateCounts(serverId, areaId, labelId, domainId, devs.length);
+
+          loadEntities(serverId, $device.val(), $("#node-input-haEntityId").val());
+        });
+      }
+
+      /* -----------------------------------------
+       * Load Filters
+       * ----------------------------------------- */
+      function loadFilters(serverId){
+
+        if (!serverId) return;
+
+        $.getJSON("amazon-echo-ha-entities/filters", {server:serverId}).done(info => {
+
+          TOTAL_DEVICES = info.total_devices;
+
+          resetSelect($area,"(All areas)");
+          info.areas.forEach(a => {
+            $area.append($("<option/>",{value:a.area_id, text:a.name}));
+          });
+
+          resetSelect($label,"(All labels)");
+          info.labels.forEach(l => {
+            $label.append($("<option/>",{value:l.label_id, text:l.name}));
+          });
+
+          const selArea   = $("#node-input-haAreaId").val();
+          const selLabel  = $("#node-input-haLabelId").val();
+          const selDomain = $("#node-input-haDomain").val();
+
+          if (selArea)  $area.val(selArea);
+          if (selLabel) $label.val(selLabel);
+
+          updateDomainList(serverId, selArea, selLabel, selDomain);
+
+          loadDevices(serverId, selArea, selLabel, selDomain, $("#node-input-haDeviceId").val());
+        });
+      }
+
+      /* -----------------------------------------
+       * EVENTS
+       * ----------------------------------------- */
+
+      $server.on("change", () => loadFilters($server.val()));
+
+      $area.on("change", () => {
+        const A = $area.val();
+        const L = $label.val();
+        $("#node-input-haAreaId").val(A);
+
+        updateDomainList($server.val(), A, L, "");
+
+        updateCounts($server.val(), A, L, "", TOTAL_DEVICES);
+
+        loadDevices($server.val(), A, L, "", "");
+      });
+
+      $label.on("change", () => {
+        const A = $area.val();
+        const L = $label.val();
+        $("#node-input-haLabelId").val(L);
+
+        updateDomainList($server.val(), A, L, "");
+
+        updateCounts($server.val(), A, L, "", TOTAL_DEVICES);
+
+        loadDevices($server.val(), A, L, "", "");
+      });
+
+      $domain.on("change", ()=> {
+        const A = $area.val();
+        const L = $label.val();
+        const D = $domain.val();
+
+        $("#node-input-haDomain").val(D);
+
+        loadDevices($server.val(), A, L, D, $("#node-input-haDeviceId").val());
+      });
+
+      $device.on("change", ()=> {
+        $("#node-input-haDeviceId").val($device.val());
+        loadEntities(
+          $server.val(),
+          $device.val(),
+          $("#node-input-haEntityId").val()
+        );
+      });
+
+      $entity.on("change", ()=> {
+        $("#node-input-haEntityId").val($entity.val());
+        setHint();
+        loadEntityInfo(
+          $server.val(),
+          $entity.val()
+        );
+      });
+
+      $("#ha-clear-filters").on("click", ()=> {
+        $area.val("");
+        $label.val("");
+        $domain.val("");
+
+        $("#node-input-haAreaId").val("");
+        $("#node-input-haLabelId").val("");
+        $("#node-input-haDomain").val("");
+
+        updateDomainList($server.val(), "", "", "");
+        updateCounts($server.val(), "", "", "", TOTAL_DEVICES);
+
+        loadDevices($server.val(), "", "", "", "");
+      });
+
+      /* -----------------------------------------
+       * Init load
+       * ----------------------------------------- */
+      if ($server.val()) loadFilters($server.val());
+
+    }
+  });
+
+})();
+</script>
