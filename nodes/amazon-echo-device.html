@@ -10,19 +10,21 @@
     <input type="text" id="node-input-haServer">
   </div>
 
-  <!-- FILTERS -->
+  <!-- AREA FILTER -->
   <div class="form-row">
     <label for="node-input-haAreaId"><i class="fa fa-building"></i> Area</label>
     <select id="node-input-haAreaId" style="width:100%"></select>
     <div class="form-tips" id="ha-area-count"></div>
   </div>
 
+  <!-- LABEL FILTER -->
   <div class="form-row">
     <label for="node-input-haLabelId"><i class="fa fa-tag"></i> Label</label>
     <select id="node-input-haLabelId" style="width:100%"></select>
     <div class="form-tips" id="ha-label-count"></div>
   </div>
 
+  <!-- DOMAIN FILTER -->
   <div class="form-row">
     <label for="node-input-haDomain"><i class="fa fa-cube"></i> Component type</label>
     <select id="node-input-haDomain" style="width:100%"></select>
@@ -44,10 +46,12 @@
 
   <div class="form-tips" id="ha-entity-hint"></div>
 
-  <!-- CLEAR FILTER BUTTON (NOW HERE) -->
+  <!-- CLEAR FILTERS BUTTON (FIXED LEFT ALIGNMENT UNDER LAST DROPDOWN) -->
   <div class="form-row" style="margin-top:6px;">
     <label></label>
-    <button type="button" id="ha-clear-filters" class="red-ui-button" style="width:auto; text-align:left;">
+    <button id="ha-clear-filters"
+            class="red-ui-button"
+            style="width:auto; text-align:left; margin-left:0 !important;">
       <i class="fa fa-times"></i> Clear all filters
     </button>
   </div>
@@ -58,16 +62,19 @@
     <div id="ha-entity-modes" class="form-tips"></div>
   </div>
 
+  <!-- ATTRIBUTES -->
   <div class="form-row" id="ha-entity-attrs-row" style="display:none;">
     <label><i class="fa fa-list"></i> Attributes</label>
-    <pre id="ha-entity-attrs" style="max-height:240px; overflow:auto; background:#f7f7f7; border:1px solid #ddd; padding:6px;"></pre>
+    <pre id="ha-entity-attrs"
+         style="max-height:240px; overflow:auto; background:#f7f7f7; border:1px solid #ddd; padding:6px;"></pre>
   </div>
+
 </script>
 
 <script type="text/javascript">
 (function(){
 
-  RED.nodes.registerType("amazon-echo-device-ha-entities",{
+  RED.nodes.registerType("amazon-echo-device-ha-entities", {
 
     category:"amazon",
     color:"#FFD580",
@@ -77,7 +84,7 @@
 
     defaults:{
       name:{value:""},
-      haServer:{value:"",type:"server",required:true},
+      haServer:{value:"",type:"server"},
       haAreaId:{value:""},
       haLabelId:{value:""},
       haDomain:{value:""},
@@ -85,12 +92,11 @@
       haEntityId:{value:""}
     },
 
-    label:function(){
-      return this.name || "Amazon Echo Device (HA)";
-    },
+    label(){ return this.name || "Amazon Echo Device (HA)"; },
 
-    oneditprepare:function(){
+    oneditprepare(){
 
+      /* ELEMENTS */
       const $server = $("#node-input-haServer");
       const $area   = $("#node-input-haAreaId");
       const $label  = $("#node-input-haLabelId");
@@ -103,101 +109,87 @@
       const $domainCount = $("#ha-domain-count");
       const $deviceCount = $("#ha-device-count");
 
-      const $hint     = $("#ha-entity-hint");
-      const $modesRow = $("#ha-entity-modes-row");
-      const $modes    = $("#ha-entity-modes");
-      const $attrsRow = $("#ha-entity-attrs-row");
-      const $attrs    = $("#ha-entity-attrs");
-
-      let TOTAL = 0;
+      const $hint = $("#ha-entity-hint");
 
       function reset($el,text){
         $el.empty().append($("<option/>",{value:"",text}));
       }
 
-      function updateHint(){
-        let e = $entity.val()||"";
-        $hint.text(e ? ("Selected entity_id: "+e) : "");
-      }
-
-      /* ----------------------------------------------------
-       * FULL FIXED: Dynamic Domain Generation (works always)
-       * ----------------------------------------------------
-       */
+      /* --------------------------------------------
+       * CORE FIX: Build domains DIRECTLY from entities
+       * -------------------------------------------- */
       function buildDomainList(serverId, areaId, labelId, restoredDomain){
 
-        const devQ = { server:serverId };
-        if(areaId)  devQ.area  = areaId;
-        if(labelId) devQ.label = labelId;
+        return $.getJSON("amazon-echo-ha-entities/entities", {server:serverId})
+        .then(allEntities => {
 
-        // 1) get devices for the filter
-        return $.getJSON("amazon-echo-ha-entities/devices",devQ)
-        .then(devices=>{
+          const filtered = allEntities.filter(e => {
 
-          const ids = devices.map(d=>d.id);
+            if (areaId && e.area_id !== areaId) return false;
 
-          // 2) get ALL entities
-          return $.getJSON("amazon-echo-ha-entities/entities",{server:serverId})
-          .then(all=>{
+            if (labelId && !(Array.isArray(e.labels) && e.labels.includes(labelId)))
+              return false;
 
-            const doms = new Set();
-
-            all.forEach(ent=>{
-              if(ent.device_id && ids.includes(ent.device_id)){
-                doms.add(ent.entity_id.split(".")[0]);
-              }
-            });
-
-            reset($domain,"(All component types)");
-            [...doms].sort().forEach(d=>{
-              $domain.append($("<option/>",{value:d,text:d}));
-            });
-
-            // restore if valid
-            if(restoredDomain && doms.has(restoredDomain))
-              $domain.val(restoredDomain);
-
-            return ids; // pass device list onward
+            return true;
           });
+
+          const domains = [...new Set(filtered.map(e => e.entity_id.split(".")[0]))].sort();
+
+          reset($domain,"(All component types)");
+
+          domains.forEach(d => {
+            $domain.append($("<option/>",{value:d,text:d}));
+          });
+
+          if (restoredDomain && domains.includes(restoredDomain))
+            $domain.val(restoredDomain);
+
+          return filtered;
         });
       }
 
-      /* ----------------------------------------------------
-       * FIXED: loadDevices ALWAYS after domain list refresh
-       * ----------------------------------------------------
-       */
-      function loadDevices(serverId, areaId, labelId, domainId, restoredDev){
-        const q = {server:serverId};
-        if(areaId)  q.area  = areaId;
-        if(labelId) q.label = labelId;
-        if(domainId) q.domain = domainId;
+      /* -------------------------------
+       * Load devices DIRECTLY from entities
+       * ------------------------------- */
+      function loadDevices(serverId, areaId, labelId, domainId, restoredDeviceId){
 
-        return $.getJSON("amazon-echo-ha-entities/devices",q)
-        .then(devs=>{
+        return $.getJSON("amazon-echo-ha-entities/entities",{server:serverId})
+        .then(allEntities => {
+
+          const ents = allEntities.filter(e => {
+
+            if(areaId && e.area_id !== areaId) return false;
+
+            if(labelId &&
+               !(Array.isArray(e.labels) && e.labels.includes(labelId)))
+                return false;
+
+            if(domainId &&
+               e.entity_id.split(".")[0] !== domainId)
+                return false;
+
+            return true;
+          });
+
+          const deviceIds = [...new Set(ents.map(e=>e.device_id))];
 
           reset($device,"(Select device)");
-          devs.forEach(d=>{
-            $device.append(
-              $("<option/>",{value:d.id,text:d.displayName||d.name||d.id})
-            );
+
+          deviceIds.forEach(id => {
+            $device.append($("<option/>",{value:id,text:id}));
           });
 
-          if(restoredDev) $device.val(restoredDev);
+          if(restoredDeviceId && deviceIds.includes(restoredDeviceId))
+            $device.val(restoredDeviceId);
 
-          updateSequentialCounts(devs.length);
+          updateCounts(deviceIds.length);
 
           loadEntities(serverId,$device.val(),$("#node-input-haEntityId").val());
-
-          return devs;
         });
       }
 
-      /* ----------------------------- */
-
-      function updateSequentialCounts(deviceCount){
-        const available = deviceCount;
-        const filtered = TOTAL - deviceCount;
-        const txt = `${available} available, ${filtered} filtered`;
+      function updateCounts(n){
+        const txt = `${n} available`;
         $areaCount.text(txt);
         $labelCount.text(txt);
         $domainCount.text(txt);
@@ -205,141 +197,75 @@
       }
 
       function loadEntities(serverId,deviceId,restored){
+
         const q = {server:serverId};
         if(deviceId) q.device = deviceId;
 
         $.getJSON("amazon-echo-ha-entities/entities",q)
         .done(ents=>{
-
           reset($entity,"(Select entity)");
-
-          ents.forEach(e=>{
-            $entity.append(
-              $("<option/>",{value:e.entity_id,text:e.displayName||e.name||e.entity_id})
-            );
-          });
-
+          ents.forEach(e =>
+            $entity.append($("<option/>",{value:e.entity_id,text:e.entity_id}))
+          );
           if(restored) $entity.val(restored);
-
-          updateHint();
+          $hint.text($entity.val());
         });
       }
 
-      /* ----------------------------------------------------
-       * LOAD FILTERS
-       * ----------------------------------------------------
-       */
-      function loadFilters(serverId){
+      /* --------------------------------------------
+       * MASTER LOAD SEQUENCE
+       * -------------------------------------------- */
 
-        $.getJSON("amazon-echo-ha-entities/filters",{server:serverId})
-        .done(data=>{
+      function reloadAll(){
 
-          TOTAL = data.total_devices;
-
-          reset($area,"(All areas)");
-          data.areas.forEach(a=> $area.append($("<option/>",{value:a.area_id,text:a.name})));
-
-          reset($label,"(All labels)");
-          data.labels.forEach(l=> $label.append($("<option/>",{value:l.label_id,text:l.name})));
-
-          const A=$("#node-input-haAreaId").val();
-          const L=$("#node-input-haLabelId").val();
-          const D=$("#node-input-haDomain").val();
-
-          if(A) $area.val(A);
-          if(L) $label.val(L);
-
-          // 1) Build filtered domain list
-          buildDomainList(serverId,A,L,D)
-          .then(()=>{
-
-            // 2) Then load devices based on new domain list
-            loadDevices(
-              serverId,
-              A, L,
-              $("#node-input-haDomain").val(),
-              $("#node-input-haDeviceId").val()
-            );
-          });
-        });
-      }
-
-      /* ----------------------------------------------------
-       * EVENT HANDLERS
-       * ----------------------------------------------------
-       */
-
-      $server.on("change", ()=>{
-        loadFilters($server.val());
-      });
-
-      $area.on("change", ()=>{
-        const A=$area.val();
-        const L=$label.val();
-
-        $("#node-input-haAreaId").val(A);
-
-        buildDomainList($server.val(),A,L,"")
-        .then(()=> loadDevices($server.val(),A,L,"",""));
-      });
-
-      $label.on("change", ()=>{
-        const A=$area.val();
-        const L=$label.val();
-
-        $("#node-input-haLabelId").val(L);
-
-        buildDomainList($server.val(),A,L,"")
-        .then(()=> loadDevices($server.val(),A,L,"",""));
-      });
-
-      $domain.on("change", ()=>{
         const A=$area.val();
         const L=$label.val();
         const D=$domain.val();
 
-        $("#node-input-haDomain").val(D);
-
-        loadDevices($server.val(),A,L,D,$("#node-input-haDeviceId").val());
-      });
-
-      $device.on("change", ()=>{
-        $("#node-input-haDeviceId").val($device.val());
-        loadEntities(
-          $server.val(),
-          $device.val(),
-          $("#node-input-haEntityId").val()
-        );
-      });
-
-      $entity.on("change", ()=>{
-        $("#node-input-haEntityId").val($entity.val());
-        updateHint();
-      });
-
-      $("#ha-clear-filters").on("click",()=>{
-
-        $area.val("");
-        $label.val("");
-        $domain.val("");
-
-        $("#node-input-haAreaId").val("");
-        $("#node-input-haLabelId").val("");
-        $("#node-input-haDomain").val("");
-
-        buildDomainList($server.val(),"","", "")
-        .then(()=> loadDevices($server.val(),"","","",""));
-      });
-
-      /* ----------------------------------------------------
-       * INITIAL LOAD
-       * ----------------------------------------------------
-       */
-      if($server.val()){
-        loadFilters($server.val());
+        buildDomainList($server.val(),A,L,D)
+        .then(()=> loadDevices($server.val(),A,L,$domain.val(),$("#node-input-haDeviceId").val()));
       }
 
-    } // oneditprepare
+      /* EVENT HOOKS */
+
+      $server.on("change", reloadAll);
+
+      $area.on("change", function(){
+        $("#node-input-haAreaId").val($area.val());
+        reloadAll();
+      });
+
+      $label.on("change", function(){
+        $("#node-input-haLabelId").val($label.val());
+        reloadAll();
+      });
+
+      $domain.on("change", function(){
+        $("#node-input-haDomain").val($domain.val());
+        reloadAll();
+      });
+
+      $device.on("change", function(){
+        $("#node-input-haDeviceId").val($device.val());
+        loadEntities($server.val(),$device.val(),$("#node-input-haEntityId").val());
+      });
+
+      $entity.on("change", function(){
+        $("#node-input-haEntityId").val($entity.val());
+        $hint.text($entity.val());
+      });
+
+      $("#ha-clear-filters").on("click", function(){
+        $area.val("");  $("#node-input-haAreaId").val("");
+        $label.val(""); $("#node-input-haLabelId").val("");
+        $domain.val("");$("#node-input-haDomain").val("");
+        reloadAll();
+      });
+
+      /* INIT */
+      if ($server.val()) reloadAll();
+
+    }
   });
 
 })();
