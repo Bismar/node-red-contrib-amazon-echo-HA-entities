@@ -1,7 +1,7 @@
 <!-- nodes/amazon-echo-device.html -->
 <script type="text/html" data-template-name="amazon-echo-device-ha-entities">
 
-  <!-- Hidden inputs (these are what Node-RED saves) -->
+  <!-- Hidden inputs (these are what Node-RED actually saves) -->
   <input type="hidden" id="node-input-haAreaId">
   <input type="hidden" id="node-input-haLabelId">
   <input type="hidden" id="node-input-haDomain">
@@ -11,14 +11,10 @@
   <!-- NAME -->
   <div class="form-row">
     <label for="node-input-name"><i class="fa fa-tag"></i> Name</label>
-    <input type="text" id="node-input-name">
+    <input type="text" id="node-input-name" placeholder="Amazon Echo Device (HA)">
   </div>
 
-  <!-- SERVER -->
-  <div class="form-row">
-    <label for="node-input-haServer"><i class="fa fa-plug"></i> Home Assistant server</label>
-    <input type="text" id="node-input-haServer">
-  </div>
+  <!-- NO HA SERVER DROPDOWN HERE ANYMORE -->
 
   <!-- AREA -->
   <div class="form-row">
@@ -56,7 +52,7 @@
 
   <div class="form-tips" id="ha-entity-hint"></div>
 
-  <!-- CLEAR FILTERS BUTTON -->
+  <!-- CLEAR FILTERS BUTTON (left aligned under the filters) -->
   <div class="form-row" style="margin-top:8px;">
     <label></label>
     <div style="margin-left:0;">
@@ -66,13 +62,13 @@
     </div>
   </div>
 
-  <!-- MODES -->
+  <!-- MODES (optional preview UI, currently unused but kept ready) -->
   <div class="form-row" id="ha-entity-modes-row" style="display:none;">
     <label><i class="fa fa-sliders"></i> Available modes</label>
     <div id="ha-entity-modes" class="form-tips"></div>
   </div>
 
-  <!-- ATTRIBUTES -->
+  <!-- ATTRIBUTES (optional preview UI, currently unused but kept ready) -->
   <div class="form-row" id="ha-entity-attrs-row" style="display:none;">
     <label><i class="fa fa-list"></i> Attributes</label>
     <pre id="ha-entity-attrs"
@@ -85,241 +81,286 @@
 <script type="text/javascript">
 (function () {
 
-RED.nodes.registerType("amazon-echo-device-ha-entities", {
-  category: "amazon",
-  color: "#FFD580",
-  icon: "amazon-echo-device.svg",
-  paletteLabel: "amazon echo device (HA)",
-  inputs: 1,
-  outputs: 1,
+  RED.nodes.registerType("amazon-echo-device-ha-entities", {
+    category: "amazon",
+    color: "#FFD580",
+    icon: "amazon-echo-device.svg",
+    paletteLabel: "amazon echo device (HA)",
+    inputs: 1,
+    outputs: 1,
 
-  defaults: {
-    name:       { value:"" },
-    haServer:   { value:"", type:"server" },
-    haAreaId:   { value:"" },
-    haLabelId:  { value:"" },
-    haDomain:   { value:"" },
-    haDeviceId: { value:"" },
-    haEntityId: { value:"" }
-  },
+    defaults: {
+      name:       { value:"" },
+      haAreaId:   { value:"" },
+      haLabelId:  { value:"" },
+      haDomain:   { value:"" },
+      haDeviceId: { value:"" },
+      haEntityId: { value:"" }
+    },
 
-  label() { return this.name || "Amazon Echo Device (HA)"; },
+    label: function () {
+      return this.name || "Amazon Echo Device (HA)";
+    },
 
-  oneditsave: function () {
-    // Save the values from the dropdowns into Node-RED config fields
-    $("#node-input-haAreaId").val( $("#haAreaSelect").val() );
-    $("#node-input-haLabelId").val( $("#haLabelSelect").val() );
-    $("#node-input-haDomain").val( $("#haDomainSelect").val() );
-    $("#node-input-haDeviceId").val( $("#haDeviceSelect").val() );
-    $("#node-input-haEntityId").val( $("#haEntitySelect").val() );
-  },
+    // Make sure Node-RED saves the final dropdown values
+    oneditsave: function () {
+      $("#node-input-haAreaId").val( $("#haAreaSelect").val() );
+      $("#node-input-haLabelId").val( $("#haLabelSelect").val() );
+      $("#node-input-haDomain").val( $("#haDomainSelect").val() );
+      $("#node-input-haDeviceId").val( $("#haDeviceSelect").val() );
+      $("#node-input-haEntityId").val( $("#haEntitySelect").val() );
+    },
 
-  oneditprepare() {
+    oneditprepare: function () {
 
-    const $server = $("#node-input-haServer");
+      // Visible dropdowns
+      const $area   = $("#haAreaSelect");
+      const $label  = $("#haLabelSelect");
+      const $domain = $("#haDomainSelect");
+      const $device = $("#haDeviceSelect");
+      const $entity = $("#haEntitySelect");
 
-    const $area   = $("#haAreaSelect");
-    const $label  = $("#haLabelSelect");
-    const $domain = $("#haDomainSelect");
-    const $device = $("#haDeviceSelect");
-    const $entity = $("#haEntitySelect");
+      // Comment lines
+      const $areaC   = $("#ha-area-count");
+      const $labelC  = $("#ha-label-count");
+      const $domainC = $("#ha-domain-count");
+      const $deviceC = $("#ha-device-count");
+      const $hint    = $("#ha-entity-hint");
 
-    const $areaC   = $("#ha-area-count");
-    const $labelC  = $("#ha-label-count");
-    const $domainC = $("#ha-domain-count");
-    const $deviceC = $("#ha-device-count");
-    const $hint    = $("#ha-entity-hint");
+      const $clear   = $("#ha-clear-filters");
 
-    const savedArea   = $("#node-input-haAreaId").val();
-    const savedLabel  = $("#node-input-haLabelId").val();
-    const savedDomain = $("#node-input-haDomain").val();
-    const savedDevice = $("#node-input-haDeviceId").val();
-    const savedEntity = $("#node-input-haEntityId").val();
+      // Saved values from config (for reopening the dialog)
+      const savedArea   = $("#node-input-haAreaId").val();
+      const savedLabel  = $("#node-input-haLabelId").val();
+      const savedDomain = $("#node-input-haDomain").val();
+      const savedDevice = $("#node-input-haDeviceId").val();
+      const savedEntity = $("#node-input-haEntityId").val();
 
-    let TOTAL = 0;
+      let TOTAL = 0;
+      let SERVER_ID = null; // inherited from Hub node
 
-    function reset($el, txt) {
-      $el.empty().append($("<option/>",{value:"",text:txt}));
-    }
+      function reset($el, txt) {
+        $el.empty().append($("<option/>",{ value:"", text: txt }));
+      }
 
-    function fmt(a,f) { return `${a} available, ${f} filtered`; }
+      function fmt(avail, filtered) {
+        return `${avail} available, ${filtered} filtered`;
+      }
 
-    function updateCounts(areaCnt, labelCnt, domainCnt) {
-      const t = TOTAL;
-      $areaC.text(fmt(areaCnt,   t - areaCnt));
-      $labelC.text(fmt(labelCnt, areaCnt - labelCnt));
-      $domainC.text(fmt(domainCnt, labelCnt - domainCnt));
-      $deviceC.text(fmt(domainCnt, t - domainCnt));
-    }
+      function updateCounts(areaCnt, labelCnt, domainCnt) {
+        const total = TOTAL;
+        $areaC.text(   fmt(areaCnt,   total - areaCnt) );
+        $labelC.text(  fmt(labelCnt,  areaCnt - labelCnt) );
+        $domainC.text( fmt(domainCnt, labelCnt - domainCnt) );
+        $deviceC.text( fmt(domainCnt, total - domainCnt) );
+      }
 
-    function loadDomains(serverId, area, label, done) {
-      reset($domain, "(All component types)");
+      function loadDomains(area, label, done) {
+        reset($domain, "(All component types)");
+        if (!SERVER_ID) { done && done(); return; }
 
-      const q = { server:serverId };
-      if (area)  q.area  = area;
-      if (label) q.label = label;
+        const q = { server: SERVER_ID };
+        if (area)  q.area  = area;
+        if (label) q.label = label;
 
-      $.getJSON("amazon-echo-ha-entities/domains", q)
-        .done(domains => {
-          (domains || []).forEach(d =>
-            $domain.append($("<option/>",{
-              value:d.domain, text:`${d.domain} (${d.count})`
-            }))
-          );
-
-          if (savedDomain)
-            $domain.val(savedDomain);
-        })
-        .always(() => done && done());
-    }
-
-
-    function loadDevices(serverId, area, label, domain) {
-      reset($device, "(Loading devices...)");
-
-      const q = { server:serverId };
-      if (area)  q.area  = area;
-      if (label) q.label = label;
-      if (domain) q.domain = domain;
-
-      $.getJSON("amazon-echo-ha-entities/devices", q)
-        .done(finalDevs => {
-
-          reset($device, "(Select device)");
-
-          (finalDevs || []).forEach(d =>
-            $device.append($("<option/>",{value:d.id,text:d.displayName||d.name||d.id}))
-          );
-
-          if (savedDevice)
-            $device.val(savedDevice);
-
-          // Count steps
-          const qA = { server:serverId };
-          if (area) qA.area = area;
-
-          const qL = { server:serverId };
-          if (area) qL.area = area;
-          if (label) qL.label = label;
-
-          $.getJSON("amazon-echo-ha-entities/devices", qA).done(areaDevs => {
-            $.getJSON("amazon-echo-ha-entities/devices", qL).done(labelDevs => {
-              updateCounts(
-                (areaDevs  || []).length,
-                (labelDevs || []).length,
-                (finalDevs || []).length
+        $.getJSON("amazon-echo-ha-entities/domains", q)
+          .done(domains => {
+            (domains || []).forEach(d => {
+              $domain.append(
+                $("<option/>",{ value: d.domain, text: `${d.domain} (${d.count})` })
               );
             });
-          });
+            if (savedDomain) $domain.val(savedDomain);
+          })
+          .always(() => done && done());
+      }
 
-          loadEntities(serverId, $device.val());
-        })
-        .fail(() => {
-          reset($device, "(Error)");
+      function loadDevices(area, label, domain) {
+        reset($device, "(Loading devices...)");
+        if (!SERVER_ID) { reset($device,"(No hub server)"); updateCounts(0,0,0); return; }
+
+        const q = { server: SERVER_ID };
+        if (area)  q.area  = area;
+        if (label) q.label = label;
+        if (domain) q.domain = domain;
+
+        $.getJSON("amazon-echo-ha-entities/devices", q)
+          .done(finalDevs => {
+            reset($device, "(Select device)");
+            (finalDevs || []).forEach(d =>
+              $device.append($("<option/>",{ value:d.id, text:d.displayName||d.name||d.id }))
+            );
+
+            if (savedDevice) $device.val(savedDevice);
+
+            // Sequential counts
+            const qA = { server: SERVER_ID };
+            if (area) qA.area = area;
+
+            const qL = { server: SERVER_ID };
+            if (area)  qL.area  = area;
+            if (label) qL.label = label;
+
+            $.getJSON("amazon-echo-ha-entities/devices", qA).done(areaDevs => {
+              $.getJSON("amazon-echo-ha-entities/devices", qL).done(labelDevs => {
+                updateCounts(
+                  (areaDevs  || []).length,
+                  (labelDevs || []).length,
+                  (finalDevs || []).length
+                );
+              });
+            });
+
+            loadEntities($device.val());
+          })
+          .fail(() => {
+            reset($device,"(Error)");
+            updateCounts(0,0,0);
+          });
+      }
+
+      function loadEntities(deviceId) {
+        reset($entity, "(Loading entities...)");
+        $entity.prop("disabled", true);
+
+        if (!SERVER_ID) {
+          reset($entity, "(No hub server)");
+          $hint.text("");
+          return;
+        }
+
+        const q = { server: SERVER_ID };
+        if (deviceId) q.device = deviceId;
+
+        $.getJSON("amazon-echo-ha-entities/entities", q)
+          .done(ents => {
+            reset($entity, "(Select entity)");
+            (ents || []).forEach(e =>
+              $entity.append($("<option/>",{ value:e.entity_id, text:e.displayName||e.name||e.entity_id }))
+            );
+
+            if (savedEntity) $entity.val(savedEntity);
+
+            $entity.prop("disabled", false);
+            $hint.text($entity.val());
+          })
+          .fail(() => {
+            reset($entity,"(Error)");
+            $hint.text("");
+          });
+      }
+
+      function loadFilters() {
+        if (!SERVER_ID) {
+          reset($area,   "(No hub server)");
+          reset($label,  "(No hub server)");
+          reset($domain, "(No hub server)");
+          reset($device, "(No hub server)");
+          reset($entity, "(No hub server)");
           updateCounts(0,0,0);
-        });
-    }
+          return;
+        }
 
+        $.getJSON("amazon-echo-ha-entities/filters", { server: SERVER_ID })
+          .done(data => {
+            TOTAL = data.total_devices || 0;
 
-    function loadEntities(serverId, deviceId) {
-      reset($entity, "(Loading entities...)");
-      $entity.prop("disabled", true);
+            reset($area, "(All areas)");
+            (data.areas || []).forEach(a =>
+              $area.append($("<option/>",{ value:a.area_id, text:a.name }))
+            );
 
-      const q = {server:serverId};
-      if (deviceId) q.device = deviceId;
+            reset($label, "(All labels)");
+            (data.labels || []).forEach(l =>
+              $label.append($("<option/>",{ value:l.label_id, text:l.name }))
+            );
 
-      $.getJSON("amazon-echo-ha-entities/entities", q)
-        .done(ents => {
-          reset($entity, "(Select entity)");
+            if (savedArea)  $area.val(savedArea);
+            if (savedLabel) $label.val(savedLabel);
 
-          (ents || []).forEach(e =>
-            $entity.append($("<option/>",{value:e.entity_id,text:e.displayName||e.name||e.entity_id}))
-          );
-
-          if (savedEntity)
-            $entity.val(savedEntity);
-
-          $entity.prop("disabled", false);
-          $hint.text($entity.val());
-        })
-        .fail(() => reset($entity, "(Error)"));
-    }
-
-
-    function loadFilters(serverId) {
-      $.getJSON("amazon-echo-ha-entities/filters",{server:serverId})
-        .done(data => {
-
-          TOTAL = data.total_devices || 0;
-
-          reset($area, "(All areas)");
-          (data.areas || []).forEach(a =>
-            $area.append($("<option/>",{value:a.area_id,text:a.name}))
-          );
-
-          reset($label, "(All labels)");
-          (data.labels || []).forEach(l =>
-            $label.append($("<option/>",{value:l.label_id,text:l.name}))
-          );
-
-          if (savedArea)  $area.val(savedArea);
-          if (savedLabel) $label.val(savedLabel);
-
-          loadDomains(serverId, $area.val(), $label.val(), () => {
-            loadDevices(serverId, $area.val(), $label.val(), savedDomain);
+            loadDomains($area.val(), $label.val(), () => {
+              loadDevices($area.val(), $label.val(), $domain.val());
+            });
+          })
+          .fail(xhr => {
+            reset($area,"(Error)");
+            reset($label,"(Error)");
+            reset($domain,"(Error)");
+            reset($device,"(Error)");
+            reset($entity,"(Error)");
+            updateCounts(0,0,0);
+            RED.notify("Failed to load HA filters: " + (xhr.responseText || xhr.statusText), "error");
           });
-        });
+      }
+
+      function resolveHubServer(callback) {
+        $.getJSON("amazon-echo-ha-entities/hub_server")
+          .done(data => {
+            SERVER_ID = data.haServer;
+            if (!SERVER_ID) {
+              RED.notify("Amazon Echo Hub (HA) node has no Home Assistant server configured.", "error");
+            }
+            if (callback) callback();
+          })
+          .fail(xhr => {
+            SERVER_ID = null;
+            reset($area,"(No hub server)");
+            reset($label,"(No hub server)");
+            reset($domain,"(No hub server)");
+            reset($device,"(No hub server)");
+            reset($entity,"(No hub server)");
+            updateCounts(0,0,0);
+            RED.notify(
+              "Could not resolve HA server from Amazon Echo Hub (HA): " +
+              (xhr.responseText || xhr.statusText),
+              "error"
+            );
+          });
+      }
+
+      // EVENTS → write back to hidden fields
+      $area.on("change", function () {
+        $("#node-input-haAreaId").val($area.val());
+        loadDomains($area.val(), $label.val(), () =>
+          loadDevices($area.val(), $label.val(), $domain.val())
+        );
+      });
+
+      $label.on("change", function () {
+        $("#node-input-haLabelId").val($label.val());
+        loadDomains($area.val(), $label.val(), () =>
+          loadDevices($area.val(), $label.val(), $domain.val())
+        );
+      });
+
+      $domain.on("change", function () {
+        $("#node-input-haDomain").val($domain.val());
+        loadDevices($area.val(), $label.val(), $domain.val());
+      });
+
+      $device.on("change", function () {
+        $("#node-input-haDeviceId").val($device.val());
+        loadEntities($device.val());
+      });
+
+      $entity.on("change", function () {
+        $("#node-input-haEntityId").val($entity.val());
+        $hint.text($entity.val());
+      });
+
+      $clear.on("click", function () {
+        $area.val("");   $("#node-input-haAreaId").val("");
+        $label.val("");  $("#node-input-haLabelId").val("");
+        $domain.val(""); $("#node-input-haDomain").val("");
+
+        loadDomains("", "", () => loadDevices("", "", ""));
+      });
+
+      // INITIAL LOAD: resolve server from Hub, then load filters
+      resolveHubServer(loadFilters);
     }
 
-
-    // WRITE FROM UI → HIDDEN INPUTS
-    $area.on("change", () => {
-      $("#node-input-haAreaId").val($area.val());
-      loadDomains($server.val(), $area.val(), $label.val(), () =>
-        loadDevices($server.val(), $area.val(), $label.val(), $domain.val())
-      );
-    });
-
-    $label.on("change", () => {
-      $("#node-input-haLabelId").val($label.val());
-      loadDomains($server.val(), $area.val(), $label.val(), () =>
-        loadDevices($server.val(), $area.val(), $label.val(), $domain.val())
-      );
-    });
-
-    $domain.on("change", () => {
-      $("#node-input-haDomain").val($domain.val());
-      loadDevices($server.val(), $area.val(), $label.val(), $domain.val());
-    });
-
-    $device.on("change", () => {
-      $("#node-input-haDeviceId").val($device.val());
-      loadEntities($server.val(), $device.val());
-    });
-
-    $entity.on("change", () => {
-      $("#node-input-haEntityId").val($entity.val());
-      $hint.text($entity.val());
-    });
-
-
-    // CLEAR FILTERS
-    $("#ha-clear-filters").on("click", () => {
-      $area.val("");  $("#node-input-haAreaId").val("");
-      $label.val(""); $("#node-input-haLabelId").val("");
-      $domain.val("");$("#node-input-haDomain").val("");
-
-      loadDomains($server.val(), "", "", () =>
-        loadDevices($server.val(), "", "", "")
-      );
-    });
-
-
-    // INITIAL LOAD
-    if ($server.val()) loadFilters($server.val());
-  }
-
-});
+  });
 
 })();
 </script>
