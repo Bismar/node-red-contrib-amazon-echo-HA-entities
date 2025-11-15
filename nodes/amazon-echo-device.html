@@ -49,10 +49,10 @@
 
   <div class="form-tips" id="ha-entity-hint"></div>
 
-  <!-- CLEAR FILTERS BUTTON (properly left aligned) -->
+  <!-- CLEAR FILTERS BUTTON (perfectly left aligned) -->
   <div class="form-row" style="margin-top:8px;">
     <label></label>
-    <div class="form-tips" style="padding-left:0;">
+    <div style="margin-left:0;">
       <button id="ha-clear-filters" type="button" class="red-ui-button">
         <i class="fa fa-times"></i> Clear all filters
       </button>
@@ -74,6 +74,7 @@
 
 </script>
 
+
 <script type="text/javascript">
 (function () {
 
@@ -82,7 +83,8 @@ RED.nodes.registerType("amazon-echo-device-ha-entities", {
   color: "#FFD580",
   icon: "amazon-echo-device.svg",
   paletteLabel: "amazon echo device (HA)",
-  inputs: 1, outputs: 1,
+  inputs: 1,
+  outputs: 1,
 
   defaults: {
     name:       { value:"" },
@@ -96,9 +98,23 @@ RED.nodes.registerType("amazon-echo-device-ha-entities", {
 
   label() { return this.name || "Amazon Echo Device (HA)"; },
 
+  // ────────────────────────────────────────────────
+  // SAVE DATA CORRECTLY
+  // ────────────────────────────────────────────────
+  oneditsave: function () {
+    // Force-save all the dropdown values into config fields
+    $("#node-input-haAreaId").val( $("#node-input-haAreaId").val() );
+    $("#node-input-haLabelId").val( $("#node-input-haLabelId").val() );
+    $("#node-input-haDomain").val( $("#node-input-haDomain").val() );
+    $("#node-input-haDeviceId").val( $("#node-input-haDeviceId").val() );
+    $("#node-input-haEntityId").val( $("#node-input-haEntityId").val() );
+  },
+
+  // ────────────────────────────────────────────────
+  // PREPARE UI
+  // ────────────────────────────────────────────────
   oneditprepare() {
 
-    // DOM elements
     const $server = $("#node-input-haServer");
     const $area   = $("#node-input-haAreaId");
     const $label  = $("#node-input-haLabelId");
@@ -117,12 +133,12 @@ RED.nodes.registerType("amazon-echo-device-ha-entities", {
     const $attrsRow = $("#ha-entity-attrs-row");
     const $attrs    = $("#ha-entity-attrs");
 
-    const $clear    = $("#ha-clear-filters");
+    const $clear = $("#ha-clear-filters");
 
     let TOTAL = 0;
 
     function reset($el, txt) {
-      $el.empty().append($("<option/>", {value:"", text:txt}));
+      $el.empty().append($("<option/>",{value:"",text:txt}));
     }
 
     function format(av, f) { return `${av} available, ${f} filtered`; }
@@ -130,8 +146,8 @@ RED.nodes.registerType("amazon-echo-device-ha-entities", {
     function sequential(areaCnt, labelCnt, domainCnt) {
       const total = TOTAL;
 
-      $areaC.text( format(areaCnt,   total - areaCnt) );
-      $labelC.text( format(labelCnt, areaCnt  - labelCnt) );
+      $areaC.text(   format(areaCnt,   total - areaCnt) );
+      $labelC.text(  format(labelCnt,  areaCnt - labelCnt) );
       $domainC.text( format(domainCnt, labelCnt - domainCnt) );
       $deviceC.text( format(domainCnt, total - domainCnt) );
     }
@@ -139,21 +155,20 @@ RED.nodes.registerType("amazon-echo-device-ha-entities", {
     function loadDomains(serverId, area, label, done) {
       reset($domain, "(All component types)");
 
-      const q = { server: serverId };
+      const q = { server:serverId };
       if (area) q.area = area;
       if (label) q.label = label;
 
       $.getJSON("amazon-echo-ha-entities/domains", q)
         .done(domains => {
-          (domains || []).forEach(d => {
-            $domain.append(
-              $("<option/>", { value: d.domain, text:`${d.domain} (${d.count})` })
-            );
-          });
+          (domains || []).forEach(d =>
+            $domain.append($("<option/>",{value:d.domain,text:`${d.domain} (${d.count})`}))
+          );
 
           const saved = $("#node-input-haDomain").val();
-          if (saved && (domains || []).some(d => d.domain === saved))
+          if (saved && (domains || []).some(d => d.domain === saved)) {
             $domain.val(saved);
+          }
         })
         .always(() => done && done());
     }
@@ -162,21 +177,20 @@ RED.nodes.registerType("amazon-echo-device-ha-entities", {
       reset($device, "(Loading devices...)");
 
       const qFinal = { server:serverId };
-      if (area) qFinal.area = area;
+      if (area)  qFinal.area  = area;
       if (label) qFinal.label = label;
       if (domain) qFinal.domain = domain;
 
       $.getJSON("amazon-echo-ha-entities/devices", qFinal)
         .done(finalDevs => {
-
           reset($device, "(Select device)");
 
           (finalDevs || []).forEach(d =>
             $device.append($("<option/>",{value:d.id,text:d.displayName||d.name||d.id}))
           );
 
-          if ($("#node-input-haDeviceId").val())
-            $device.val($("#node-input-haDeviceId").val());
+          const saved = $("#node-input-haDeviceId").val();
+          if (saved) $device.val(saved);
 
           // sequential counts
           const qA = {server:serverId};
@@ -197,10 +211,9 @@ RED.nodes.registerType("amazon-echo-device-ha-entities", {
           });
 
           loadEntities(serverId, $device.val());
-
         })
         .fail(() => {
-          reset($device, "(Error)");
+          reset($device,"(Error)");
           sequential(0,0,0);
         });
     }
@@ -256,8 +269,8 @@ RED.nodes.registerType("amazon-echo-device-ha-entities", {
         });
     }
 
-    // ───── SAVE ON CHANGE ─────────────────────────
-    $area.on("change", function(){
+    // ─────────────────── SAVING EVENTS ───────────────────
+    $area.on("change", function() {
       $("#node-input-haAreaId").val($area.val());
       loadDomains($server.val(), $area.val(), $label.val(), () => {
         $("#node-input-haDomain").val($domain.val());
@@ -265,7 +278,7 @@ RED.nodes.registerType("amazon-echo-device-ha-entities", {
       });
     });
 
-    $label.on("change", function(){
+    $label.on("change", function() {
       $("#node-input-haLabelId").val($label.val());
       loadDomains($server.val(), $area.val(), $label.val(), () => {
         $("#node-input-haDomain").val($domain.val());
@@ -273,23 +286,23 @@ RED.nodes.registerType("amazon-echo-device-ha-entities", {
       });
     });
 
-    $domain.on("change", function(){
+    $domain.on("change", function() {
       $("#node-input-haDomain").val($domain.val());
       loadDevices($server.val(), $area.val(), $label.val(), $domain.val());
     });
 
-    $device.on("change", function(){
+    $device.on("change", function() {
       $("#node-input-haDeviceId").val($device.val());
       loadEntities($server.val(), $device.val());
     });
 
-    $entity.on("change", function(){
+    $entity.on("change", function() {
       $("#node-input-haEntityId").val($entity.val());
       $hint.text($entity.val());
     });
 
     // CLEAR FILTERS
-    $clear.on("click", function(){
+    $clear.on("click", function() {
       $area.val("");   $("#node-input-haAreaId").val("");
       $label.val("");  $("#node-input-haLabelId").val("");
       $domain.val(""); $("#node-input-haDomain").val("");
@@ -301,6 +314,7 @@ RED.nodes.registerType("amazon-echo-device-ha-entities", {
 
     // INIT
     if ($server.val()) loadFilters($server.val());
+
   }
 
 });
